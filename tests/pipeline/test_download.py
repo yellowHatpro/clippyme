@@ -125,7 +125,12 @@ def test_resolve_cookies_none_when_nothing_available(tmp_path, monkeypatch):
 
 def test_player_client_chain_default(monkeypatch):
     monkeypatch.delenv("YTDLP_PLAYER_CLIENTS", raising=False)
-    assert dl._player_client_chain() == ["default", "tv+tv_embedded", "web_safari"]
+    assert dl._player_client_chain() == [
+        "default",
+        "default+web_embedded",
+        "web_safari+web_embedded",
+        "default",
+    ]
 
 
 def test_player_client_chain_env_override(monkeypatch):
@@ -135,7 +140,12 @@ def test_player_client_chain_env_override(monkeypatch):
 
 def test_player_client_chain_blank_env_falls_back(monkeypatch):
     monkeypatch.setenv("YTDLP_PLAYER_CLIENTS", "   ")
-    assert dl._player_client_chain() == ["default", "tv+tv_embedded", "web_safari"]
+    assert dl._player_client_chain() == [
+        "default",
+        "default+web_embedded",
+        "web_safari+web_embedded",
+        "default",
+    ]
 
 
 def test_extractor_args_default_is_none():
@@ -150,8 +160,8 @@ def test_extractor_args_single_client():
 
 
 def test_extractor_args_joined_clients():
-    assert dl._extractor_args_for("tv+tv_embedded") == {
-        "youtube": {"player_client": ["tv", "tv_embedded"]}
+    assert dl._extractor_args_for("default+web_embedded") == {
+        "youtube": {"player_client": ["default", "web_embedded"]}
     }
 
 
@@ -164,6 +174,8 @@ def test_extractor_args_joined_clients():
     "No video formats found!; please report this issue",
     "empty formats returned by extractor",
     "403 Forbidden",
+    "ERROR: [youtube] abc: The page needs to be reloaded.",
+    "YouTube says: Please reload this page",
 ])
 def test_classify_retry(msg):
     assert dl.classify_download_error(msg) == "retry"

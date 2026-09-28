@@ -139,8 +139,19 @@ _FORMAT_LADDER = (
     'best[ext=mp4]/bestvideo*+bestaudio/best'
 )
 
-# Player-client fallback chain (mid-2026 verified bot-resistance order).
-_DEFAULT_PLAYER_CLIENTS = ("default", "tv+tv_embedded", "web_safari")
+# Player-client fallback chain.  YouTube retired ``tv_embedded`` and the
+# remaining TV client can return an UNPLAYABLE/"page needs to be reloaded"
+# response.  Keep yt-dlp's own default first, then use the combinations
+# recommended by yt-dlp upstream for the current YouTube player rollout.
+# Repeating ``default`` last is intentional: a download-time 403 commonly
+# means that the first extraction produced a stale/blocked media URL, and a
+# fresh extraction after the other attempts can produce a working URL.
+_DEFAULT_PLAYER_CLIENTS = (
+    "default",
+    "default+web_embedded",
+    "web_safari+web_embedded",
+    "default",
+)
 
 
 def _player_client_chain():
@@ -190,6 +201,8 @@ def classify_download_error(msg: str) -> str:
         "http error 403",
         "403 forbidden",
         "403:",
+        "the page needs to be reloaded",
+        "please reload this page",
         "requested format is not available",
         "requested format not available",
         "no formats found",

@@ -127,6 +127,9 @@ services:
       # for a deliberate LAN deployment: every API request must then carry
       # X-API-Token (the dashboard has a Settings field for it).
       - CLIPPYME_API_TOKEN=${CLIPPYME_API_TOKEN:-}
+      - XDG_CACHE_HOME=/app/data/cache
+      - HF_HOME=/app/data/cache/huggingface
+      - MPLCONFIGDIR=/app/data/cache/matplotlib
     volumes:
       - .:/app
       - /app/__pycache__

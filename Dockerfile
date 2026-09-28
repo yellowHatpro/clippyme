@@ -156,7 +156,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # NOTE: do NOT `pip install --upgrade yt-dlp` here — that would un-pin yt-dlp
 # from requirements.lock and pull whatever the latest unreviewed release is at
-# build time. The reviewed floor is yt-dlp>=2026.6.9,<2027; update it by
+# build time. The reviewed floor is yt-dlp>=2026.8.19,<2027; update it by
 # regenerating the lock.
 
 # Create non-root user
@@ -175,6 +175,15 @@ COPY --chown=appuser:appuser . .
 # `python -m clippyme.pipeline.main` and `uvicorn clippyme.api.app:app` resolve.
 USER root
 RUN pip install --no-cache-dir -e .
+
+# The runtime server drops to appuser while /app is commonly a host bind
+# mount owned by a different UID.  Keep all library caches in data/, whose
+# ownership the entrypoint normalizes before startup, rather than letting
+# HuggingFace/Matplotlib/PyTorch try to create /app/.cache or /app/.config.
+ENV XDG_CACHE_HOME=/app/data/cache \
+    HF_HOME=/app/data/cache/huggingface \
+    MPLCONFIGDIR=/app/data/cache/matplotlib \
+    TORCH_HOME=/app/data/cache/torch
 
 # Entrypoint normalizes ownership of the (bind-mountable) data/ dir as root,
 # then drops to appuser via gosu before launching the server. Copied to a
