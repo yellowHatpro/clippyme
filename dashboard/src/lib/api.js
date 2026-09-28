@@ -31,7 +31,8 @@ function pickLanguage(pre) {
 }
 
 export async function submitProcessJob(data, apiKey, { signal } = {}) {
-  const headers = { 'X-Gemini-Key': apiKey };
+  const headers = {};
+  if (apiKey) headers['X-Gemini-Key'] = apiKey;
   let body;
   const language = pickLanguage(data.preselections);
   const reframeMode = data.preselections?.reframe_mode;
@@ -85,7 +86,10 @@ export async function submitBatchJob(data, apiKey, { signal } = {}) {
   if ((data.preselections?.model || '').trim()) batchBody.model = data.preselections.model.trim();
   const res = await apiFetch(getApiUrl('/api/batch'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Gemini-Key': apiKey },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(apiKey ? { 'X-Gemini-Key': apiKey } : {}),
+    },
     body: JSON.stringify(batchBody),
     signal,
   });

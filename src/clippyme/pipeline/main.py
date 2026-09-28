@@ -16,7 +16,6 @@ from tqdm import tqdm
 import yt_dlp
 import mediapipe as mp
 # import whisper (replaced by faster_whisper inside function)
-from google import genai
 from dotenv import load_dotenv
 import json
 
@@ -84,6 +83,8 @@ from clippyme.pipeline.gemini_request import (  # noqa: E402,F401
     generate_with_model_fallback,
     is_rate_limit_error,
 )
+from clippyme.llm.base import LLMProviderError  # noqa: E402
+from clippyme.llm.service import configured_model, create_provider, get_provider_name  # noqa: E402
 
 # YOLO is lazy-loaded on first use. Keeping the model at import time
 # forced every entry-point (including --reframe-only, which never calls
@@ -404,23 +405,27 @@ def transcribe_video(video_path):
                     pass
 
 def get_viral_clips(transcript_result, video_duration, instructions=None):
-    print("🤖  Analyzing with Gemini...")
+    try:
+        provider_name = get_provider_name()
+    except LLMProviderError as e:
+        print(f"❌ {e}")
+        return None
+    provider_label = "OpenRouter" if provider_name == "openrouter" else "Gemini"
+    print(f"🤖  Analyzing with {provider_label}...")
+    get_viral_clips._last_llm_exhausted = False
+    # Backwards-compatible flag consumed by persisted monitor state.
     get_viral_clips._last_gemini_exhausted = False
 
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        print("❌ Error: GEMINI_API_KEY not found in environment variables.")
+    try:
+        provider = create_provider()
+    except LLMProviderError as e:
+        print(f"❌ {e}")
         return None
 
-    client = genai.Client(api_key=api_key)
-    
-    # Use selected model from env, or default to gemini-3.5-flash
-    model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+    model_name = configured_model()
+    print(f"🤖  Initializing {provider_label} with model: {model_name}")
 
-    model_chain = build_model_chain(model_name, os.getenv("GEMINI_FALLBACK_MODELS"))
-    print(f"🤖  Initializing Gemini with model chain: {' → '.join(model_chain)}")
-
-    if any(old in model_name for old in ("1.0", "1.5", "2.0")):
+    if provider_name == "gemini" and any(old in model_name for old in ("1.0", "1.5", "2.0")):
         print(f"⚠️  WARNING: {model_name} is deprecated. Please switch to gemini-3.5-flash or later via the dashboard.")
 
     # Prompt building (word flattening, untrusted-instructions fencing,
@@ -432,33 +437,52 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
     )
 
     if not words:
-        print("⏭️  Empty transcript (no words) — skipping Gemini, no clips.")
+        print("⏭️  Empty transcript (no words) — skipping LLM analysis, no clips.")
         return None
 
-    max_attempts = int(os.getenv("GEMINI_MAX_RETRIES", "3") or "3")
     try:
-        response, model_name = generate_with_model_fallback(
-            client, prompt, model_chain, max_attempts=max_attempts)
-    except Exception as e:
-        if is_rate_limit_error(e):
+        response = provider.generate(prompt=prompt, model=model_name)
+        model_name = response.model
+    except LLMProviderError as e:
+        if e.rate_limited:
+            get_viral_clips._last_llm_exhausted = True
             get_viral_clips._last_gemini_exhausted = True
-            print("🚫 All Gemini models rate-limited — no clips this run.")
-        print(f"❌ Gemini API failed across model chain: {e}")
+            print(f"🚫 All configured {provider_name} models rate-limited — no clips this run.")
+        print(f"❌ {provider_label} API failed: {e}")
         return None
 
-    # --- Cost Calculation (pure math in gemini_request) ---
-    cost_analysis = None
-    try:
-        usage = response.usage_metadata
-        if usage:
-            cost_analysis = compute_gemini_cost(
-                usage.prompt_token_count, usage.candidates_token_count, model_name)
-            print(f"💰 Token Usage ({model_name}):")
-            print(f"   - Input Tokens: {cost_analysis['input_tokens']} (${cost_analysis['input_cost']:.6f})")
-            print(f"   - Output Tokens: {cost_analysis['output_tokens']} (${cost_analysis['output_cost']:.6f})")
-            print(f"   - Total Estimated Cost: ${cost_analysis['total_cost']:.6f}")
-    except Exception as e:
-        print(f"⚠️ Could not calculate cost: {e}")
+    cost_analysis = {
+        "provider": response.provider,
+        "model": response.model,
+        "llm_provider": response.provider,
+        "llm_model": response.model,
+        "input_tokens": response.input_tokens,
+        "output_tokens": response.output_tokens,
+        "total_cost": response.estimated_cost,
+        "estimated_llm_cost_usd": response.estimated_cost,
+        "transcription_cost_usd": 0 if os.getenv("TRANSCRIPTION_PROVIDER", "whisper") == "whisper" else None,
+    }
+    if response.provider == "gemini":
+        cost_analysis.update(compute_gemini_cost(
+            response.input_tokens, response.output_tokens, response.model
+        ))
+        cost_analysis.update({
+            "provider": response.provider,
+            "model": response.model,
+            "llm_provider": response.provider,
+            "llm_model": response.model,
+            "estimated_llm_cost_usd": response.estimated_cost,
+            "transcription_cost_usd": (
+                0 if os.getenv("TRANSCRIPTION_PROVIDER", "whisper") == "whisper" else None
+            ),
+        })
+    print(f"💰 Token Usage ({response.provider}/{response.model}):")
+    print(f"   - Input Tokens: {response.input_tokens}")
+    print(f"   - Output Tokens: {response.output_tokens}")
+    if response.estimated_cost is not None:
+        print(f"   - Estimated Cost: ${response.estimated_cost:.6f}")
+    else:
+        print("   - Estimated Cost: unavailable from provider response")
 
     # Parse response JSON via the 5-level chain in gemini_parser.
     # See CLAUDE.md section "Gemini viral detection — parsing chain".
@@ -469,52 +493,50 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
         )
         from pydantic import ValidationError
 
-        text = response.text or ""
+        text = response.content or ""
 
-        def _retry_gemini(err_msg: str) -> str:
-            """Level-4 retry: reformat ONLY, using the cheap flash model.
+        def _retry_llm(err_msg: str) -> str:
+            """Level-4 retry: reformat only, without resending the transcript.
 
             The reasoning is already done in the primary call — if it
             produced text we just failed to parse, the bottleneck is
-            formatting, not understanding. Decouple the two concerns
-            (Gopalan, Google Cloud Community, Oct 2025) and hand the
-            retry to gemini-2.5-flash which is ~10x cheaper than pro
-            and plenty capable of reformatting JSON.
+            formatting, not understanding. Gemini uses its configured cheap
+            retry model; OpenRouter reuses the resolved primary model unless
+            ``OPENROUTER_RETRY_MODEL`` is explicitly configured.
 
             Crucially, we do NOT resend the full transcript + prompt:
             we hand the model ONLY the previous broken output and ask
             it to reformat. That avoids paying the input-token cost of
             the transcript twice and keeps the retry latency-bounded.
             """
-            retry_model = os.getenv("GEMINI_RETRY_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+            if provider_name == "openrouter":
+                retry_model = os.getenv("OPENROUTER_RETRY_MODEL") or model_name
+            else:
+                retry_model = os.getenv("GEMINI_RETRY_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
             retry_prompt = build_reformat_prompt(err_msg, text)
             try:
-                retry_chain = build_model_chain(
-                    retry_model, os.getenv("GEMINI_FALLBACK_MODELS"))
-                retry_resp, retry_model = generate_with_model_fallback(
-                    client, retry_prompt, retry_chain, max_attempts=1,
-                )
-                print(f"🔁 Retry via {retry_model} (cheap reformatter)")
-                return retry_resp.text or ""
-            except Exception as e:
-                print(f"⚠️  Gemini retry failed: {e}")
+                retry_resp = provider.generate(prompt=retry_prompt, model=retry_model)
+                print(f"🔁 Retry via {retry_resp.provider}/{retry_resp.model} (JSON reformatter)")
+                return retry_resp.content or ""
+            except LLMProviderError as e:
+                print(f"⚠️  LLM retry failed: {e}")
                 return ""
 
         parse_result = parse_gemini_response(
             text,
-            retry_fn=_retry_gemini,
+            retry_fn=_retry_llm,
             request_id=os.urandom(4).hex(),
         )
 
         # Structured log line for observability.
         print(
-            f"📊 gemini_parse path={parse_result.parse_path} "
+            f"📊 llm_parse provider={provider_name} path={parse_result.parse_path} "
             f"duration_ms={parse_result.duration_ms:.1f} "
             f"error={parse_result.error or 'none'}"
         )
 
         if parse_result.data is None:
-            print(f"❌ Failed to parse Gemini response: {parse_result.error}")
+            print(f"❌ Failed to parse LLM response: {parse_result.error}")
             return None
 
         try:
@@ -571,8 +593,8 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
             result_json["cost_analysis"] = cost_analysis
         return result_json
     except Exception as e:
-        print(f"❌ Unexpected error in Gemini response processing: {e}")
-        logging.getLogger("clippyme").exception("Unexpected error in Gemini response processing")
+        print(f"❌ Unexpected error in LLM response processing: {e}")
+        logging.getLogger("clippyme").exception("Unexpected error in LLM response processing")
         return None
 
 
@@ -590,7 +612,7 @@ def build_texttiling_fallback(transcript_result, video_title):
         topic_clips = texttiling_ops.find_topic_clips(segments)
         if not topic_clips:
             return None
-        print(f"🧩 Gemini unavailable — lexical TextTiling found {len(topic_clips)} topic clips.")
+        print(f"🧩 LLM unavailable — lexical TextTiling found {len(topic_clips)} topic clips.")
         shorts = []
         for i, tc in enumerate(topic_clips):
             snippet = (tc.get('text') or '').strip()
@@ -600,7 +622,7 @@ def build_texttiling_fallback(transcript_result, video_title):
                 'video_title_for_youtube_short': f"{video_title} — part {i + 1}",
                 'tiktok_caption': snippet[:150],
                 'viral_score': 0,
-                'viral_reason': "Topic-segmented fallback (no AI scoring — Gemini was unavailable).",
+                'viral_reason': "Topic-segmented fallback (no AI scoring — the LLM was unavailable).",
                 'hook': '',
             })
         return {"shorts": shorts}
@@ -642,11 +664,10 @@ if __name__ == '__main__':
                         help="Output aspect ratio: 9:16 vertical (default), 1:1 square, or 16:9 horizontal.")
     parser.add_argument('--monitor', action='store_true',
                         help='Live-monitor job: never use TextTiling/whole-video '
-                             'fallbacks; empty transcript or Gemini exhaustion → zero clips.')
+                             'fallbacks; empty transcript or LLM exhaustion → zero clips.')
     parser.add_argument('--model', type=str, default=None,
-                        help="Override the Gemini model for viral detection on THIS job (e.g. "
-                             "'gemini-2.5-pro', 'gemini-3.1-pro-preview'). When unset, the pipeline uses "
-                             "GEMINI_MODEL from env / Settings (default gemini-3.5-flash).")
+                        help="Override the selected LLM provider model for THIS job (for example "
+                             "'gemini-2.5-pro' or 'openrouter/free').")
 
     args = parser.parse_args()
 
@@ -665,18 +686,22 @@ if __name__ == '__main__':
         print(f"❌ Invalid --letterbox-zoom: {args.letterbox_zoom!r}")
         sys.exit(2)
 
-    # Per-job Gemini model override — set the env BEFORE get_viral_clips, which
-    # reads GEMINI_MODEL at call time (main.py get_viral_clips). Lets the user
-    # pick a different model per run without changing the global Settings value.
+    # Per-job provider model override. Lets the user compare models without
+    # changing the global Settings value.
     if args.model:
         # Validate here too, not just at the API→subprocess boundary: a direct
         # CLI invocation (`--model '$(evil)'`) would otherwise set an arbitrary
-        # value in the child env. Mirrors GEMINI_MODEL_RE in job_results.
-        if not re.match(r"^gemini-[A-Za-z0-9.\-]{1,64}$", args.model):
+        # value in the child env. Mirrors LLM_MODEL_RE in job_results.
+        from clippyme.domain.job_results import LLM_MODEL_RE
+
+        if not LLM_MODEL_RE.fullmatch(args.model):
             print(f"❌ invalid --model: {args.model!r}")
             sys.exit(2)
-        os.environ["GEMINI_MODEL"] = args.model
-        print(f"🤖  Gemini model override: {args.model}")
+        provider_name = get_provider_name()
+        model_env = "OPENROUTER_MODEL" if provider_name == "openrouter" else "GEMINI_MODEL"
+        os.environ[model_env] = args.model
+        provider_label = "OpenRouter" if provider_name == "openrouter" else "Gemini"
+        print(f"🤖  {provider_label} model override: {args.model}")
 
     # Per-job language override — propagate to the env BEFORE any transcription
     # call so deepgram_transcribe.transcribe_with_deepgram reads the user's

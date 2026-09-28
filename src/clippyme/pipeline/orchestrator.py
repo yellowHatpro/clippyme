@@ -1,7 +1,7 @@
 """Checkpointed backend entrypoint for the ClippyMe video pipeline.
 
 The historical :mod:`clippyme.pipeline.main` remains the owner of the heavy CV,
-transcription and Gemini functions. This module imports those functions and
+transcription and LLM-analysis functions. This module imports those functions and
 replaces only the CLI orchestration used by queued backend jobs, adding atomic
 phase checkpoints, per-clip resume, preflight, QA and operational progress.
 """
@@ -162,10 +162,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def _configure_overrides(args: argparse.Namespace) -> None:
     if args.model:
-        if not re.match(r"^gemini-[A-Za-z0-9.\-]{1,64}$", args.model):
+        from clippyme.domain.job_results import LLM_MODEL_RE
+        from clippyme.llm.service import get_provider_name
+
+        if not LLM_MODEL_RE.fullmatch(args.model):
             raise ValueError(f"invalid --model: {args.model!r}")
-        os.environ["GEMINI_MODEL"] = args.model
-        print(f"🤖 Gemini model override: {args.model}", flush=True)
+        provider = get_provider_name()
+        key = "OPENROUTER_MODEL" if provider == "openrouter" else "GEMINI_MODEL"
+        os.environ[key] = args.model
+        provider_label = "OpenRouter" if provider == "openrouter" else "Gemini"
+        print(f"🤖 {provider_label} model override: {args.model}", flush=True)
     if args.language:
         if not re.match(r"^[A-Za-z]{2,8}(-[A-Za-z0-9]{2,8})?$", args.language):
             raise ValueError(f"invalid --language: {args.language!r}")
@@ -286,7 +292,9 @@ def _run_preflight(args, input_video: str, output_dir: str, state: RuntimeState,
         free_disk = shutil.disk_usage(output_dir).free
     except OSError:
         free_disk = None
-    model = args.model or os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+    from clippyme.llm.service import configured_model
+
+    model = args.model or configured_model()
     report = build_preflight(
         PreflightInputs(
             duration_seconds=duration,
@@ -400,6 +408,9 @@ def _load_or_analyze(
             if not should_use_fallback(args.monitor):
                 clips_data = {
                     "shorts": [],
+                    "llm_exhausted": bool(
+                        getattr(legacy.get_viral_clips, "_last_llm_exhausted", False)
+                    ),
                     "gemini_exhausted": bool(
                         getattr(legacy.get_viral_clips, "_last_gemini_exhausted", False)
                     ),

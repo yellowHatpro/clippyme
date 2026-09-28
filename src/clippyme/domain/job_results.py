@@ -27,9 +27,15 @@ def canonical_reframe_mode(mode):
     return REFRAME_MODE_ALIASES.get(mode, mode)
 
 
-# New Gemini families are discovered at runtime, therefore validate the family
-# prefix and an argv-safe character set rather than pinning a stale allow-list.
-GEMINI_MODEL_RE = re.compile(r"^gemini-[A-Za-z0-9.\-]{1,64}$")
+# Provider model IDs are passed as one argv item. Permit common Gemini and
+# OpenRouter slug characters while rejecting whitespace, shell metacharacters,
+# leading dashes and unbounded input.
+LLM_MODEL_PATTERN = (
+    r"^(?:gemini-[A-Za-z0-9.\-]{1,64}|"
+    r"[A-Za-z0-9][A-Za-z0-9._+\-]{0,63}/[A-Za-z0-9][A-Za-z0-9._:/+\-]{0,62})$"
+)
+LLM_MODEL_RE = re.compile(LLM_MODEL_PATTERN)
+GEMINI_MODEL_RE = re.compile(r"^gemini-[A-Za-z0-9.\-]{1,64}$")  # compatibility
 
 ALLOWED_LANGUAGES = frozenset({
     "multi", "auto",
@@ -76,7 +82,7 @@ def build_main_cmd(
         raise ValueError(f"invalid start_offset: {start_offset!r}")
     if model is not None:
         model = model.strip()
-        if model and not GEMINI_MODEL_RE.match(model):
+        if model and not LLM_MODEL_RE.fullmatch(model):
             raise ValueError(f"invalid model: {model!r}")
     if aspect is not None and aspect not in ("9:16", "1:1", "16:9"):
         raise ValueError(f"invalid aspect: {aspect!r}")
@@ -217,5 +223,6 @@ def load_final_result(job_id: str, output_dir: str) -> dict | None:
     base_name = os.path.basename(target_json).replace("_metadata.json", "")
     clips = _build_clips(data, base_name, job_id, output_dir, only_ready=False)
     payload = _result_payload(data, clips, output_dir)
+    payload["llm_exhausted"] = data.get("llm_exhausted")
     payload["gemini_exhausted"] = data.get("gemini_exhausted")
     return payload

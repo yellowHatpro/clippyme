@@ -72,6 +72,10 @@ test('pipelineStepMeta.detect reflects the Gemini model or the no-AI fallback', 
   );
   assert.equal(pipelineStepMeta(['🤖  Gemini model override: gemini-2.5-pro'], {}).detect, 'gemini-2.5-pro');
   assert.equal(
+    pipelineStepMeta(['🤖  Initializing OpenRouter with model: openrouter/free'], {}).detect,
+    'openrouter/free',
+  );
+  assert.equal(
     pipelineStepMeta(['🧩 Gemini unavailable — lexical TextTiling found 4 topic clips.'], {}).detect,
     'topic segments · no AI',
   );

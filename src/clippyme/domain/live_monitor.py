@@ -563,6 +563,8 @@ class LiveMonitor:
         # than a degraded clip). Cleared the next time a segment publishes clips.
         self._gemini_exhausted_at: str | None = None
         self._gemini_key = None
+        self._llm_provider = "gemini"
+        self._llm_key_name = "GEMINI_API_KEY"
         self._zernio_key = None
 
         self.cfg: dict = {}
@@ -688,9 +690,13 @@ class LiveMonitor:
 
         from clippyme.storage.config_store import load_persistent_config, load_zernio_config
         pc = load_persistent_config() or {}
-        self._gemini_key = pc.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        self._llm_provider = (pc.get("LLM_PROVIDER") or "gemini").strip().lower()
+        self._llm_key_name = (
+            "OPENROUTER_API_KEY" if self._llm_provider == "openrouter" else "GEMINI_API_KEY"
+        )
+        self._gemini_key = pc.get(self._llm_key_name) or os.environ.get(self._llm_key_name)
         if not self._gemini_key:
-            raise ValidationError("Gemini API key not configured")
+            raise ValidationError(f"{self._llm_provider.title()} API key not configured")
         self._zernio_key = load_zernio_config().get("api_key")
         if not self._zernio_key:
             raise ValidationError("Zernio API key not configured")
@@ -1143,7 +1149,8 @@ class LiveMonitor:
         job_dir = os.path.join(self._output_dir, job_id)
         os.makedirs(job_dir, exist_ok=True)
         env = os.environ.copy()
-        env["GEMINI_API_KEY"] = self._gemini_key
+        env["LLM_PROVIDER"] = self._llm_provider
+        env[self._llm_key_name] = self._gemini_key
         # Bound each segment's clip count for the publish-limited monitor —
         # the pipeline keeps the top-N by viral_score (get_viral_clips).
         # `or 5` would turn a deliberate 0 back into 5 — 0 is the "no cap"

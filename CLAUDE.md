@@ -69,12 +69,12 @@ Python backend is src-layout under `src/clippyme/` (`pip install -e .`):
 - `pipeline/` — `orchestrator.py` (**the entrypoint queued jobs actually run**:
   preflight → checkpointed `main.py` stages → per-render output QA; owns
   retries, resume and `.clippyme_runtime.json`), `preflight.py` (pure-ish
-  pre-spend probe: duration/size/disk/Gemini-cost estimate + quota rejection,
+  pre-spend probe: duration/size/disk/LLM-cost estimate + quota rejection,
   exit code 2 = never retried), `media_qa.py` (ffprobe clip verification:
   streams, aspect, black/freeze ratio, loudness), `quality_suite.py`
   (manifest-driven regression runner replaying the production QA policy —
   path-confined to the manifest dir), `main.py` (CLI orchestrator — still owns
-  transcription/Gemini/cut/reframe), `reframe.py` (orchestrator:
+  transcription/LLM analysis/cut/reframe), `reframe.py` (orchestrator:
   scene analysis, frame strategies, render loops, `process_video_to_vertical`),
   `reframe_track.py` (pure tracking classes — host-tested, no cv2),
   `reframe_detect.py` (YOLO/MediaPipe detectors), `reframe_ops.py` (pure
@@ -90,6 +90,10 @@ Python backend is src-layout under `src/clippyme/` (`pip install -e .`):
   per-word payload is TOON-encoded (`encode_words_toon`, ~50% smaller than
   JSON) while the response contract stays JSON),
   `media_probe.py` (ffprobe + silencedetect wrappers), `texttiling_ops.py`
+- `llm/` — provider-neutral `LLMProvider`/`LLMResponse` contract,
+  environment-driven provider selection, preserved Gemini adapter, and the
+  OpenRouter OpenAI-compatible HTTP adapter. Candidate JSON always continues
+  through `pipeline/gemini_parser.py`; do not duplicate its repair chain.
   (no-AI topic-segmentation fallback), `deepgram_transcribe.py`,
   `elevenlabs_transcribe.py`, `gemini_service.py`, `gemini_parser.py`,
   `scene_detection.py`, `download.py`, `postprocess.py`, `diarization.py`,
@@ -173,7 +177,7 @@ deliberately**: the frontend poller terminates only on
 `completed|stopped|cancelled|failed` — an unknown status polls forever.
 
 **Pipeline (per job)**: yt-dlp download → transcription → PySceneDetect →
-Gemini viral detection (5-level JSON-repair fallback chain in
+provider-neutral LLM viral detection (Gemini or OpenRouter; 5-level JSON-repair fallback chain in
 `gemini_parser.py`; TextTiling topic-split as the no-AI fallback; whole-video
 render as the last resort) → per-clip edge snapping (word → sentence →
 waveform-silence, `cut_ops.py`) → 9:16 reframe → Ken Burns zoom (folded into
@@ -186,9 +190,9 @@ as `clip_filename` in metadata (re-dumped atomically per cut iteration) and
 every consumer resolves through `clip_resolve.clip_filename_for`
 (clip_filename → video_url → positional legacy fallback).
 
-**Transcription**: `TRANSCRIPTION_PROVIDER` = `deepgram` (default, Nova-3
-REST) | `elevenlabs` (Scribe; audio-event tags feed the Gemini prompt) |
-`whisper` (local). Both cloud providers silently fall back to Faster-Whisper
+**Transcription**: `TRANSCRIPTION_PROVIDER` = `whisper` (default, local) |
+`deepgram` (Nova-3 REST) | `elevenlabs` (Scribe; audio-event tags feed the
+viral-selection prompt). Both cloud providers silently fall back to Faster-Whisper
 on any failure. All paths transcribe an extracted mono-16kHz FLAC, not the
 video. Transcripts are cached 7 days under `data/cache/` keyed by URL hash.
 

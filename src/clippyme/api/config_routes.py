@@ -104,7 +104,7 @@ async def get_config(request: Request):
     config = await asyncio.to_thread(load_persistent_config)
     # Secret keys are never returned verbatim — even short values are masked so
     # a brief key can't leak. Non-secret flags (model/provider) pass through.
-    secret_keys = {"GEMINI_API_KEY", "HF_TOKEN", "DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY",
+    secret_keys = {"GEMINI_API_KEY", "OPENROUTER_API_KEY", "HF_TOKEN", "DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY",
                    "YOUTUBE_COOKIES", "TWITCH_CLIENT_SECRET"}
     masked = {}
     for k, v in config.items():

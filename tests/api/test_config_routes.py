@@ -67,7 +67,11 @@ def test_config_roundtrip_masks_secrets(client):
     """POST then GET: secret keys come back masked, plain flags verbatim."""
     r = client.post(
         "/api/config",
-        json={"keys": {"GEMINI_API_KEY": "abcd12345678wxyz", "GEMINI_MODEL": "gemini-3.5-flash"}},
+        json={"keys": {
+            "GEMINI_API_KEY": "abcd12345678wxyz",
+            "GEMINI_MODEL": "gemini-3.5-flash",
+            "OPENROUTER_API_KEY": "sk-or-secret-value",
+        }},
     )
     assert r.status_code == 200 and r.json()["success"] is True
 
@@ -77,6 +81,7 @@ def test_config_roundtrip_masks_secrets(client):
     assert "12345678" not in got["GEMINI_API_KEY"]
     # Non-secret flag passes through untouched.
     assert got["GEMINI_MODEL"] == "gemini-3.5-flash"
+    assert got["OPENROUTER_API_KEY"] == "sk-o...alue"
 
 
 def test_config_short_secret_fully_masked(client):

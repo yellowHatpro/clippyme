@@ -3,13 +3,12 @@ ask→execute).
 
 ClippyMe's manual trim made the user tap each transcript line to cut it. This
 adds the missing natural-language path: the user types an instruction
-("cut the intro, drop the bit where he stumbles") and Gemini returns the
+("cut the intro, drop the bit where he stumbles") and the configured LLM returns the
 clip-relative spans to remove, which flow through the SAME `drop_ranges`
 machinery the tap-to-cut UI already feeds.
 
-Prompt building + response parsing are pure (host-unit-testable). The Gemini
-call itself is a thin wrapper using the same `google-genai` client as
-gemini_service — no cv2, so this stays importable on the host.
+Prompt building + response parsing are pure (host-unit-testable). The network
+call uses the same provider-neutral layer as viral candidate selection.
 """
 from __future__ import annotations
 
@@ -120,29 +119,32 @@ def suggest_drops(
     segments: list[dict],
     instruction: str,
     clip_duration: float,
+    provider_name: str = "gemini",
 ) -> dict:
-    """Ask Gemini which spans to cut. Returns {"drops": [...], "explanation": str}.
+    """Ask the configured LLM which spans to cut.
 
     Network/SDK errors are swallowed into an empty result with the error in
     `explanation` — a failed suggestion must not 500 the editor.
     """
     if not api_key:
-        return {"drops": [], "explanation": "Gemini API key not configured."}
+        return {"drops": [], "explanation": f"{provider_name.title()} API key not configured."}
     prompt = build_edit_prompt(segments, instruction, clip_duration)
     try:
-        from google import genai
+        from clippyme.llm.service import create_provider
 
-        client = genai.Client(api_key=api_key)
-        resp = client.models.generate_content(model=model, contents=prompt)
-        text = getattr(resp, "text", "") or ""
-        result = parse_edit_response(text, clip_duration)
+        env = {"LLM_PROVIDER": provider_name}
+        key_name = "OPENROUTER_API_KEY" if provider_name == "openrouter" else "GEMINI_API_KEY"
+        env[key_name] = api_key
+        provider = create_provider(env)
+        response = provider.generate(prompt=prompt, model=model)
+        result = parse_edit_response(response.content, clip_duration)
         logger.info(
-            "clip_edit_ai: model=%s instruction_len=%d → %d drops",
-            model, len(instruction or ""), len(result["drops"]),
+            "clip_edit_ai: provider=%s model=%s instruction_len=%d → %d drops",
+            provider_name, response.model, len(instruction or ""), len(result["drops"]),
         )
         return result
     except Exception as e:  # pragma: no cover — network path
-        from clippyme.pipeline.gemini_service import _redact_key
-
-        logger.warning("clip_edit_ai suggest_drops failed: %s", e)
-        return {"drops": [], "explanation": f"AI edit failed: {_redact_key(str(e))}"}
+        # Provider errors are constructed without credentials. Avoid surfacing
+        # arbitrary transport exception text as an additional defence.
+        logger.warning("clip_edit_ai suggest_drops failed: %s", type(e).__name__)
+        return {"drops": [], "explanation": f"AI edit failed: {type(e).__name__}"}

@@ -11,8 +11,15 @@ logger = logging.getLogger("clippyme")
 DATA_DIR = "data"
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 VALID_CONFIG_KEYS = (
+    "LLM_PROVIDER",
     "GEMINI_API_KEY",
     "GEMINI_MODEL",
+    "GEMINI_FALLBACK_MODELS",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_MODEL",
+    "OPENROUTER_FALLBACK_MODELS",
+    "OPENROUTER_TIMEOUT_SECONDS",
+    "OPENROUTER_MAX_RETRIES",
     "YOUTUBE_COOKIES",
     "HF_TOKEN",
     "DEEPGRAM_API_KEY",
@@ -158,13 +165,20 @@ def _normalize_incoming_keys(data: dict) -> dict:
 
 def load_persistent_config() -> dict:
     config = {
+        "LLM_PROVIDER": os.environ.get("LLM_PROVIDER", "gemini"),
         "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
         "GEMINI_MODEL": os.environ.get("GEMINI_MODEL", "gemini-3.5-flash"),
+        "GEMINI_FALLBACK_MODELS": os.environ.get("GEMINI_FALLBACK_MODELS", ""),
+        "OPENROUTER_API_KEY": os.environ.get("OPENROUTER_API_KEY", ""),
+        "OPENROUTER_MODEL": os.environ.get("OPENROUTER_MODEL", "openrouter/free"),
+        "OPENROUTER_FALLBACK_MODELS": os.environ.get("OPENROUTER_FALLBACK_MODELS", ""),
+        "OPENROUTER_TIMEOUT_SECONDS": os.environ.get("OPENROUTER_TIMEOUT_SECONDS", "120"),
+        "OPENROUTER_MAX_RETRIES": os.environ.get("OPENROUTER_MAX_RETRIES", "3"),
         "YOUTUBE_COOKIES": os.environ.get("YOUTUBE_COOKIES", ""),
         "HF_TOKEN": os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN") or "",
         "DEEPGRAM_API_KEY": os.environ.get("DEEPGRAM_API_KEY", ""),
         "ELEVENLABS_API_KEY": os.environ.get("ELEVENLABS_API_KEY", ""),
-        "TRANSCRIPTION_PROVIDER": os.environ.get("TRANSCRIPTION_PROVIDER", "deepgram"),
+        "TRANSCRIPTION_PROVIDER": os.environ.get("TRANSCRIPTION_PROVIDER", "whisper"),
         "TWITCH_CLIENT_ID": os.environ.get("TWITCH_CLIENT_ID", ""),
         "TWITCH_CLIENT_SECRET": os.environ.get("TWITCH_CLIENT_SECRET", ""),
     }

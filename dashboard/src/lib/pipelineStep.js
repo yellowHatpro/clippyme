@@ -22,9 +22,8 @@ export function detectPipelineStep(logs) {
   ) {
     return 'processing';
   }
-  // Detection phase — Gemini scoring OR the no-AI TextTiling fallback (which
-  // logs "Gemini unavailable — lexical TextTiling …").
-  if (joined.includes('Analyzing with Gemini') || joined.includes('Gemini') || joined.includes('TextTiling')) {
+  // Detection phase — provider LLM scoring or the no-AI TextTiling fallback.
+  if (joined.includes('Analyzing with') || joined.includes('Initializing OpenRouter') || joined.includes('Gemini') || joined.includes('TextTiling')) {
     return 'analyzing';
   }
   if (joined.includes('Transcribing') || joined.includes('Faster-Whisper')) return 'transcribing';
@@ -36,7 +35,7 @@ export function detectPipelineStep(logs) {
 /**
  * Derive per-step meta overrides so the pipeline display reflects what actually
  * ran instead of static guesses. Pure: depends only on the streamed logs (for
- * transcription provider/model and the Gemini-vs-TextTiling branch) and the
+ * transcription provider/model and the LLM-vs-TextTiling branch) and the
  * submitted opts (for the reframe policy, which is chosen client-side and not
  * reliably echoed in the logs).
  *
@@ -76,12 +75,14 @@ export function pipelineStepMeta(logs = [], opts = {}) {
     meta.transcribe = `whisper ${m[1].trim().toLowerCase()}`;
   }
 
-  // --- Detect moments: Gemini model, or the no-AI TextTiling fallback ------
+  // --- Detect moments: provider/model, or the no-AI TextTiling fallback ----
   if (joined.includes('TextTiling')) {
     meta.detect = 'topic segments · no AI';
   } else if (
     (m = joined.match(/Gemini model override:\s*([\w.-]+)/)) ||
-    (m = joined.match(/Initializing Gemini with model:\s*([\w.-]+)/))
+    (m = joined.match(/Initializing Gemini with model:\s*([\w.-]+)/)) ||
+    (m = joined.match(/OpenRouter model override:\s*([\w./:+-]+)/)) ||
+    (m = joined.match(/Initializing OpenRouter with model:\s*([\w./:+-]+)/))
   ) {
     meta.detect = m[1];
   }

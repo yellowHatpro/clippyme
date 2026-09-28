@@ -27,7 +27,11 @@ vi.mock('./realApi', () => ({
   deleteLogo: vi.fn(),
 }));
 
-const EMPTY_CONFIG = { GEMINI_API_KEY: '', HF_TOKEN: '', DEEPGRAM_API_KEY: '', ELEVENLABS_API_KEY: '' };
+const EMPTY_CONFIG = {
+  LLM_PROVIDER: 'gemini', GEMINI_API_KEY: '', OPENROUTER_API_KEY: '',
+  OPENROUTER_MODEL: 'openrouter/free', OPENROUTER_FALLBACK_MODELS: '',
+  HF_TOKEN: '', DEEPGRAM_API_KEY: '', ELEVENLABS_API_KEY: '',
+};
 const SET_CONFIG = { ...EMPTY_CONFIG, GEMINI_API_KEY: 'AIza...xyz1' };
 
 beforeEach(() => {
@@ -109,6 +113,21 @@ test('Twitch client id/secret rows show empty when unset', async () => {
   mount();
   const idRow = () => screen.getByLabelText('Twitch client ID').closest('.keyrow');
   await waitFor(() => expect(within(idRow()).getByText('empty')).toBeInTheDocument());
+});
+
+test('OpenRouter provider exposes configurable key and model slug', async () => {
+  getConfig.mockResolvedValue({ ...EMPTY_CONFIG, LLM_PROVIDER: 'openrouter' });
+  mount();
+  const key = await screen.findByLabelText('OpenRouter');
+  fireEvent.focus(key);
+  fireEvent.change(key, { target: { value: 'sk-or-test' } });
+  fireEvent.blur(key);
+  expect(saveConfig).toHaveBeenCalledWith({ OPENROUTER_API_KEY: 'sk-or-test' });
+
+  const model = screen.getByLabelText('OpenRouter model');
+  fireEvent.change(model, { target: { value: 'vendor/model:free' } });
+  fireEvent.blur(model);
+  expect(saveConfig).toHaveBeenCalledWith({ OPENROUTER_MODEL: 'vendor/model:free' });
 });
 
 // HistoryView — title + per-job "published" badge (derived from

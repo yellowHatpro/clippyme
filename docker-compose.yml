@@ -40,7 +40,7 @@ services:
       - HF_TOKEN=${HF_TOKEN:-}
       - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN:-${HF_TOKEN:-}}
       # ASR provider + credentials. TRANSCRIPTION_PROVIDER=deepgram|elevenlabs|whisper.
-      - TRANSCRIPTION_PROVIDER=${TRANSCRIPTION_PROVIDER:-deepgram}
+      - TRANSCRIPTION_PROVIDER=${TRANSCRIPTION_PROVIDER:-whisper}
       - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
       - DEEPGRAM_MODEL=${DEEPGRAM_MODEL:-nova-3}
       # Default 'multi' enables Nova-3 native EN+IT code-switching.
@@ -59,11 +59,17 @@ services:
       # Whisper fallback diarization. Requires ENABLE_WHISPER_DIARIZE=1
       # at build time AND HF_TOKEN set at runtime.
       - WHISPER_DIARIZE=${WHISPER_DIARIZE:-true}
-      # Gemini key is normally passed per-request via the X-Gemini-Key
-      # header, but can also be set here for CLI runs that shell into the
-      # container directly.
+      # Provider-neutral viral analysis. Keys may also be persisted in the
+      # dashboard; headers remain supported for per-request Gemini/OpenRouter.
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.5-flash}
+      - GEMINI_FALLBACK_MODELS=${GEMINI_FALLBACK_MODELS:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-openrouter/free}
+      - OPENROUTER_FALLBACK_MODELS=${OPENROUTER_FALLBACK_MODELS:-}
+      - OPENROUTER_TIMEOUT_SECONDS=${OPENROUTER_TIMEOUT_SECONDS:-120}
+      - OPENROUTER_MAX_RETRIES=${OPENROUTER_MAX_RETRIES:-3}
       # yt-dlp hardening. NOCHECKCERT=1 disables SSL verification only in
       # trusted sandboxes; THROTTLED_RATE is the bytes/sec floor below
       # which yt-dlp re-fetches a slow segment (default 102400 = 100 KB/s).

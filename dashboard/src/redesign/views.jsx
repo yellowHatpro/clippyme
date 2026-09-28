@@ -121,6 +121,10 @@ function KeyRow({ icon, name, desc, value, onChange, onSave, onClear, placeholde
 
 export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesChange, pushToast }) {
   const [gemini, setGemini] = useState(apiKey || '');
+  const [openrouter, setOpenrouter] = useState('');
+  const [llmProvider, setLlmProvider] = useState('gemini');
+  const [openrouterModel, setOpenrouterModel] = useState('openrouter/free');
+  const [openrouterFallbacks, setOpenrouterFallbacks] = useState('');
   const [deepgram, setDeepgram] = useState('');
   const [elevenlabs, setElevenlabs] = useState('');
   const [hf, setHf] = useState('');
@@ -164,9 +168,13 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
     const c = await getConfig();
     if (!c) { pushToast?.('warn', 'Could not refresh key status'); return; }
     setPresent({
-      gemini: !!c.GEMINI_API_KEY, hf: !!c.HF_TOKEN, deepgram: !!c.DEEPGRAM_API_KEY, elevenlabs: !!c.ELEVENLABS_API_KEY,
+      gemini: !!c.GEMINI_API_KEY, openrouter: !!c.OPENROUTER_API_KEY,
+      hf: !!c.HF_TOKEN, deepgram: !!c.DEEPGRAM_API_KEY, elevenlabs: !!c.ELEVENLABS_API_KEY,
       twitchId: !!c.TWITCH_CLIENT_ID, twitchSecret: !!c.TWITCH_CLIENT_SECRET,
     });
+    if (c.LLM_PROVIDER) setLlmProvider(c.LLM_PROVIDER);
+    if (c.OPENROUTER_MODEL) setOpenrouterModel(c.OPENROUTER_MODEL);
+    if (c.OPENROUTER_FALLBACK_MODELS != null) setOpenrouterFallbacks(c.OPENROUTER_FALLBACK_MODELS);
     if (c.TRANSCRIPTION_PROVIDER) setProvider(c.TRANSCRIPTION_PROVIDER);
     if (c.GEMINI_MODEL) setModel(c.GEMINI_MODEL);
   };
@@ -255,6 +263,16 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
       <Hero eyebrow="Settings" line1="Keys & connections." sub="Everything is stored locally. Your keys never leave your machine." />
 
       <Panel title="API keys" sub="Required for transcription & moment detection" icon="key-round" style={{ marginBottom: 18 }}>
+        <div className="opt">
+          <div className="oico"><Icon n="sparkles" /></div>
+          <div className="otxt"><div className="ot">LLM provider</div><div className="od">Used for viral-moment discovery and AI editing</div></div>
+          <div className="r"><Segmented value={llmProvider}
+            onChange={(id) => { setLlmProvider(id); saveKeys({ LLM_PROVIDER: id }); }}
+            options={[{ id: 'openrouter', label: 'OpenRouter' }, { id: 'gemini', label: 'Gemini' }]} /></div>
+        </div>
+        <KeyRow icon="route" name="OpenRouter" desc="OpenAI-compatible LLM access · free router supported" value={openrouter} present={present.openrouter}
+          onChange={setOpenrouter} onSave={() => saveKeys({ OPENROUTER_API_KEY: openrouter })}
+          onClear={() => { setOpenrouter(''); saveKeys({ OPENROUTER_API_KEY: '' }); }} placeholder="sk-or-v1-…" />
         <KeyRow icon="sparkles" name="Gemini" desc="Viral-moment detection" value={gemini} present={present.gemini}
           onChange={(v) => { setGemini(v); onApiKey?.(v); }} onSave={() => saveKeys({ GEMINI_API_KEY: gemini })}
           onClear={() => { setGemini(''); onApiKey?.(''); saveKeys({ GEMINI_API_KEY: '' }); }} placeholder="AIza…" />
@@ -275,13 +293,30 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
           onClear={() => { setTwitchSecret(''); saveKeys({ TWITCH_CLIENT_SECRET: '' }); }} placeholder="Helix app client secret" />
         <KeyRow icon="key-round" name="API token" desc="Only for LAN deploys with CLIPPYME_API_TOKEN set — stored in this browser, sent as X-API-Token" value={apiToken} present={!!getApiToken()}
           onChange={setApiTokenState} onSave={() => { setApiToken(apiToken); pushToast?.('success', apiToken.trim() ? 'API token saved' : 'API token cleared'); }} placeholder="Shared secret (leave empty + Save to clear)" />
-        <div className="opt" style={{ borderBottom: 0 }}>
+        {llmProvider === 'openrouter' && <>
+          <div className="opt">
+            <div className="oico"><Icon n="route" /></div>
+            <div className="otxt"><div className="ot">OpenRouter model</div><div className="od">Any model slug; openrouter/free stays at zero model cost</div></div>
+            <div className="r"><input className="key-input" aria-label="OpenRouter model" value={openrouterModel}
+              onChange={(e) => setOpenrouterModel(e.target.value)}
+              onBlur={() => saveKeys({ OPENROUTER_MODEL: openrouterModel.trim() || 'openrouter/free' })} /></div>
+          </div>
+          <div className="opt">
+            <div className="oico"><Icon n="git-branch" /></div>
+            <div className="otxt"><div className="ot">OpenRouter fallbacks</div><div className="od">Comma-separated and opt-in; leave blank to prevent paid fallback</div></div>
+            <div className="r"><input className="key-input" aria-label="OpenRouter fallback models" value={openrouterFallbacks}
+              placeholder="vendor/model:free"
+              onChange={(e) => setOpenrouterFallbacks(e.target.value)}
+              onBlur={() => saveKeys({ OPENROUTER_FALLBACK_MODELS: openrouterFallbacks.trim() })} /></div>
+          </div>
+        </>}
+        {llmProvider === 'gemini' && <div className="opt" style={{ borderBottom: 0 }}>
           <div className="oico"><Icon n="audio-lines" /></div>
           <div className="otxt"><div className="ot">Transcription engine</div><div className="od">Cloud STT falls back to local Whisper if its key is missing</div></div>
           <div className="r"><Segmented value={provider}
             onChange={(id) => { setProvider(id); saveKeys({ TRANSCRIPTION_PROVIDER: id }); }}
             options={[{ id: 'deepgram', label: 'Deepgram' }, { id: 'elevenlabs', label: 'ElevenLabs' }, { id: 'whisper', label: 'Whisper' }]} /></div>
-        </div>
+        </div>}
         {provider === 'deepgram' && !present.deepgram && (
           <div className="od" style={{ color: 'var(--warn, #f5a623)', padding: '0 0 8px 44px' }}>⚠ No Deepgram key saved — pipeline will use local Whisper.</div>
         )}
@@ -395,10 +430,10 @@ export function ApiKeyModal({ onClose, onGoToSettings }) {
     <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal" ref={panelRef}
         role="dialog" aria-modal="true" aria-labelledby="apikey-modal-title">
-        <div className="modal-head"><h3 id="apikey-modal-title">Add your Gemini key</h3><button className="x" onClick={onClose} aria-label="Close"><Icon n="x" /></button></div>
+        <div className="modal-head"><h3 id="apikey-modal-title">Configure an LLM key</h3><button className="x" onClick={onClose} aria-label="Close"><Icon n="x" /></button></div>
         <div className="modal-body">
           <p style={{ color: 'var(--fg-2)', fontSize: 14, lineHeight: 1.55 }}>
-            ClippyMe needs a Gemini key to score the transcript and find viral moments. It&apos;s stored locally and never leaves your machine.
+            ClippyMe needs an OpenRouter or Gemini key to score the transcript and find viral moments. It is stored locally and sent only to the selected provider.
           </p>
         </div>
         <div className="modal-foot">

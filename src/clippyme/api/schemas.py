@@ -9,7 +9,12 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
-from clippyme.domain.job_results import ALLOWED_LANGUAGES, GEMINI_MODEL_RE, MAX_INSTRUCTIONS_LEN
+from clippyme.domain.job_results import (
+    ALLOWED_LANGUAGES,
+    GEMINI_MODEL_RE,
+    LLM_MODEL_RE,
+    MAX_INSTRUCTIONS_LEN,
+)
 from clippyme.netutil import resolve_host_addresses
 from clippyme.schemas import ViralClip, ViralClipsResponse  # noqa: F401
 
@@ -93,7 +98,10 @@ class ProcessRequest(BaseModel):
     no_zoom: Optional[bool] = False
     skip_analysis: Optional[bool] = False
     model: Optional[str] = Field(
-        None, max_length=72, pattern=r"^gemini-[A-Za-z0-9.\-]{1,64}$"
+        None,
+        max_length=128,
+        pattern=(r"^(?:gemini-[A-Za-z0-9.\-]{1,64}|"
+                 r"[A-Za-z0-9][A-Za-z0-9._+\-]{0,63}/[A-Za-z0-9][A-Za-z0-9._:/+\-]{0,62})$"),
     )
 
     @field_validator("url")
@@ -121,7 +129,10 @@ class BatchRequest(BaseModel):
     no_zoom: Optional[bool] = False
     skip_analysis: Optional[bool] = False
     model: Optional[str] = Field(
-        None, max_length=72, pattern=r"^gemini-[A-Za-z0-9.\-]{1,64}$"
+        None,
+        max_length=128,
+        pattern=(r"^(?:gemini-[A-Za-z0-9.\-]{1,64}|"
+                 r"[A-Za-z0-9][A-Za-z0-9._+\-]{0,63}/[A-Za-z0-9][A-Za-z0-9._:/+\-]{0,62})$"),
     )
 
     @field_validator("urls")
@@ -139,7 +150,10 @@ class BatchRequest(BaseModel):
 
 
 _ALLOWED_CONFIG_KEYS = frozenset({
-    "GEMINI_API_KEY", "GEMINI_MODEL", "YOUTUBE_COOKIES", "HF_TOKEN",
+    "LLM_PROVIDER", "GEMINI_API_KEY", "GEMINI_MODEL", "GEMINI_FALLBACK_MODELS",
+    "OPENROUTER_API_KEY", "OPENROUTER_MODEL", "OPENROUTER_FALLBACK_MODELS",
+    "OPENROUTER_TIMEOUT_SECONDS", "OPENROUTER_MAX_RETRIES",
+    "YOUTUBE_COOKIES", "HF_TOKEN",
     "HUGGINGFACE_TOKEN", "DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY",
     "TRANSCRIPTION_PROVIDER", "TWITCH_CLIENT_ID", "TWITCH_CLIENT_SECRET",
 })
@@ -163,6 +177,33 @@ class ConfigUpdateRequest(BaseModel):
         model = values.get("GEMINI_MODEL")
         if model and not GEMINI_MODEL_RE.fullmatch(model):
             raise ValueError("GEMINI_MODEL is not a valid Gemini model id")
+        llm_provider = values.get("LLM_PROVIDER")
+        if llm_provider not in (None, "", "gemini", "openrouter"):
+            raise ValueError("LLM_PROVIDER must be gemini or openrouter")
+        openrouter_model = values.get("OPENROUTER_MODEL")
+        if openrouter_model and not LLM_MODEL_RE.fullmatch(openrouter_model):
+            raise ValueError("OPENROUTER_MODEL is not a valid model id")
+        fallbacks = values.get("OPENROUTER_FALLBACK_MODELS")
+        if fallbacks:
+            fallback_models = [item.strip() for item in fallbacks.split(",") if item.strip()]
+            if len(fallback_models) > 10 or any(
+                not LLM_MODEL_RE.fullmatch(item) for item in fallback_models
+            ):
+                raise ValueError("OPENROUTER_FALLBACK_MODELS contains an invalid model id")
+        timeout = values.get("OPENROUTER_TIMEOUT_SECONDS")
+        if timeout:
+            try:
+                if not 1 <= float(timeout) <= 600:
+                    raise ValueError
+            except ValueError as exc:
+                raise ValueError("OPENROUTER_TIMEOUT_SECONDS must be between 1 and 600") from exc
+        retries = values.get("OPENROUTER_MAX_RETRIES")
+        if retries:
+            try:
+                if not 1 <= int(retries) <= 10:
+                    raise ValueError
+            except ValueError as exc:
+                raise ValueError("OPENROUTER_MAX_RETRIES must be between 1 and 10") from exc
         return values
 
 

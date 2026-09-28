@@ -43,10 +43,6 @@ export function useJobSubmission({
   );
 
   const handleProcess = async (data) => {
-    if (!apiKey) {
-      setShowKeyModal(true);
-      return;
-    }
     setStatus('processing');
     setLogs(['Initializing engine...']);
     setResults(null);
@@ -57,16 +53,13 @@ export function useJobSubmission({
       const resData = await submitProcessJob(withTaste(data), apiKey);
       setJobId(resData.job_id);
     } catch (e) {
+      if (e.status === 400 && /api key|missing x-/i.test(e.message || '')) setShowKeyModal(true);
       setStatus('error');
       setLogs((l) => [...l, `Error: ${e.message}`]);
     }
   };
 
   const handleBatchProcess = async (data) => {
-    if (!apiKey) {
-      setShowKeyModal(true);
-      return;
-    }
     setStatus('processing');
     setLogs(['Launching batch processing...']);
     setResults(null);
@@ -248,6 +241,7 @@ export function useJobSubmission({
       };
       pollRef.current = setTimeout(tick, POLL_MS);
     } catch (e) {
+      if (e.status === 400 && /api key|missing x-/i.test(e.message || '')) setShowKeyModal(true);
       setStatus('error');
       setLogs((l) => [...l, `Batch error: ${e.message}`]);
     }

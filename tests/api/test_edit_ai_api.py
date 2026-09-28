@@ -44,8 +44,13 @@ def teardown_function():
 def test_edit_ai_returns_drop_ranges(monkeypatch, tmp_path):
     captured = {}
 
-    def fake_suggest(*, api_key, model, segments, instruction, clip_duration):
-        captured.update(instruction=instruction, model=model, duration=clip_duration)
+    def fake_suggest(*, api_key, model, segments, instruction, clip_duration, provider_name):
+        captured.update(
+            instruction=instruction,
+            model=model,
+            duration=clip_duration,
+            provider=provider_name,
+        )
         return {"drops": [[0.0, 1.0]], "explanation": "cut intro"}
 
     monkeypatch.setattr(clip_edit_ai, "suggest_drops", fake_suggest)

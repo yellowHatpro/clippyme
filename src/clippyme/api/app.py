@@ -242,7 +242,9 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Content-Type", "Authorization", "X-Gemini-Key", "X-API-Token"],
+    allow_headers=[
+        "Content-Type", "Authorization", "X-Gemini-Key", "X-OpenRouter-Key", "X-API-Token"
+    ],
 )
 
 # Mount static files for serving videos.
@@ -289,6 +291,33 @@ async def root():
 async def health():
     return {"status": "healthy"}
 
+
+def _llm_job_env(request: Request, *, skip_analysis: bool = False) -> dict[str, str]:
+    """Build a job environment with the selected provider's write-only key.
+
+    Legacy ``X-Gemini-Key`` callers remain supported. OpenRouter callers may
+    use ``X-OpenRouter-Key`` or persist the key through Settings/environment.
+    """
+    env = os.environ.copy()
+    provider = (env.get("LLM_PROVIDER") or "gemini").strip().lower()
+    if provider == "openrouter":
+        key_name = "OPENROUTER_API_KEY"
+        api_key = request.headers.get("X-OpenRouter-Key") or env.get(key_name)
+    elif provider == "gemini":
+        key_name = "GEMINI_API_KEY"
+        api_key = request.headers.get("X-Gemini-Key") or env.get(key_name)
+    else:
+        raise HTTPException(status_code=400, detail="LLM_PROVIDER must be gemini or openrouter")
+    if not api_key and not skip_analysis:
+        header = "X-OpenRouter-Key" if provider == "openrouter" else "X-Gemini-Key"
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing {header} header or persisted {key_name}",
+        )
+    if api_key:
+        env[key_name] = api_key
+    return env
+
 @app.post("/api/process")
 async def process_endpoint(
     request: Request,
@@ -300,10 +329,6 @@ async def process_endpoint(
     require_trusted_config_request(request)
     # ~20 single-job submissions/min per client; compute-heavy, so throttle.
     enforce_rate_limit(request, "process", capacity=20, refill_per_sec=20 / 60)
-    api_key = request.headers.get("X-Gemini-Key")
-    if not api_key:
-        raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
-
     # Handle JSON body via ProcessRequest for URL payloads. Pydantic
     # enforces the reframe_mode regex and the instructions length cap
     # before we hand anything to build_main_cmd. Multipart uploads keep
@@ -371,12 +396,10 @@ async def process_endpoint(
     if not url and not file:
         raise HTTPException(status_code=400, detail="Must provide URL or File")
 
+    env = _llm_job_env(request, skip_analysis=skip_analysis)
     job_id = str(uuid.uuid4())
     job_output_dir = os.path.join(OUTPUT_DIR, job_id)
     os.makedirs(job_output_dir, exist_ok=True)
-    
-    env = os.environ.copy()
-    env["GEMINI_API_KEY"] = api_key
 
     input_path = None
     if not url:
@@ -453,9 +476,7 @@ async def batch_process(req: BatchRequest, request: Request):
     require_trusted_config_request(request)
     # Each batch can enqueue up to 20 jobs, so limit batch calls more tightly.
     enforce_rate_limit(request, "batch", capacity=10, refill_per_sec=10 / 60)
-    api_key = request.headers.get("X-Gemini-Key")
-    if not api_key:
-        raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
+    env = _llm_job_env(request, skip_analysis=bool(req.skip_analysis))
 
     batch_jobs = []
 
@@ -487,9 +508,6 @@ async def batch_process(req: BatchRequest, request: Request):
             # made it into `jobs` — clean it up so a bad URL can't orphan a dir.
             await asyncio.to_thread(shutil.rmtree, job_output_dir, True)
             raise HTTPException(status_code=400, detail=str(exc))
-
-        env = os.environ.copy()
-        env["GEMINI_API_KEY"] = api_key
 
         try:
             await submit_job(
@@ -673,8 +691,9 @@ async def edit_clip_ai(
     req: EditAIRequest,
     request: Request,
     api_key: Optional[str] = Header(None, alias="X-Gemini-Key"),
+    openrouter_api_key: Optional[str] = Header(None, alias="X-OpenRouter-Key"),
 ):
-    """Conversational clip trim: a plain-English instruction → Gemini → the
+    """Conversational clip trim: a plain-English instruction → LLM → the
     clip-relative spans to remove. The returned `drop_ranges` feed the SAME
     manual-trim machinery as the tap-to-cut UI (compose / publish honour them)."""
     require_trusted_config_request(request)
@@ -691,16 +710,22 @@ async def edit_clip_ai(
     segments = clip_transcript_segments(transcript, start, end)
 
     cfg = load_persistent_config() or {}
-    key = api_key or os.environ.get("GEMINI_API_KEY") or cfg.get("GEMINI_API_KEY")
-    model = req.model or cfg.get("GEMINI_MODEL") or "gemini-3.5-flash"
+    provider_name = (cfg.get("LLM_PROVIDER") or "gemini").strip().lower()
+    if provider_name == "openrouter":
+        key = openrouter_api_key or os.environ.get("OPENROUTER_API_KEY") or cfg.get("OPENROUTER_API_KEY")
+        model = req.model or cfg.get("OPENROUTER_MODEL") or "openrouter/free"
+    else:
+        key = api_key or os.environ.get("GEMINI_API_KEY") or cfg.get("GEMINI_API_KEY")
+        model = req.model or cfg.get("GEMINI_MODEL") or "gemini-3.5-flash"
     if not key:
-        raise HTTPException(status_code=400, detail="Gemini API key not configured")
+        raise HTTPException(status_code=400, detail=f"{provider_name.title()} API key not configured")
 
     from clippyme.domain.clip_edit_ai import suggest_drops
     result = await asyncio.to_thread(
         suggest_drops,
         api_key=key,
         model=model,
+        provider_name=provider_name,
         segments=segments,
         instruction=req.instruction,
         clip_duration=duration,

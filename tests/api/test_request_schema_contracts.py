@@ -3,7 +3,7 @@ import pytest
 from pydantic import ValidationError
 
 from clippyme.api.schemas import (
-    BatchRequest, LiveMonitorPublishingRequest, LiveMonitorStartRequest,
+    BatchRequest, ConfigUpdateRequest, LiveMonitorPublishingRequest, LiveMonitorStartRequest,
     LiveMonitorStopRequest, ProcessRequest,
 )
 
@@ -30,6 +30,28 @@ def test_batch_rejects_all_blank_urls_after_cleaning():
 def test_batch_language_is_rejected_at_api_boundary():
     with pytest.raises(ValidationError):
         BatchRequest(urls=["https://example.com/video"], language="not-a-language")
+
+
+def test_process_accepts_openrouter_model_slug():
+    request = ProcessRequest(
+        url="https://upload.invalid/local",
+        model="openrouter/free",
+    )
+    assert request.model == "openrouter/free"
+
+
+def test_openrouter_config_validates_models_and_retry_bounds():
+    request = ConfigUpdateRequest(keys={
+        "LLM_PROVIDER": "openrouter",
+        "OPENROUTER_MODEL": "openrouter/free",
+        "OPENROUTER_FALLBACK_MODELS": "vendor/one:free,vendor/two",
+        "OPENROUTER_MAX_RETRIES": "3",
+    })
+    assert request.keys["OPENROUTER_MODEL"] == "openrouter/free"
+    with pytest.raises(ValidationError):
+        ConfigUpdateRequest(keys={"OPENROUTER_FALLBACK_MODELS": "paid/model;rm -rf"})
+    with pytest.raises(ValidationError):
+        ConfigUpdateRequest(keys={"OPENROUTER_MAX_RETRIES": "99"})
 
 
 def test_live_monitor_start_preserves_runtime_domain_fields():
